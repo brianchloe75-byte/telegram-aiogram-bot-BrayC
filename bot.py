@@ -1,6 +1,7 @@
 import os
 import time
 import asyncio
+import random
 import yt_dlp
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -17,10 +18,12 @@ dp = Dispatcher(bot)
 if not os.path.exists("downloads"):
     os.makedirs("downloads")
 
+# 🔥 Queue system (limit active downloads)
 semaphore = asyncio.Semaphore(2)
+
 user_data = {}
 
-# 🌐 Render fix
+# 🌐 Render keep-alive
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -31,39 +34,43 @@ def run_web():
     port = int(os.environ.get("PORT", 10000))
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
-# 🎬 Detect platform
-def detect_platform(url):
-    if "youtube" in url:
-        return "YouTube"
-    elif "tiktok" in url:
-        return "TikTok"
-    elif "instagram" in url:
-        return "Instagram"
-    elif "facebook" in url:
-        return "Facebook"
-    return "Video"
+# 🔥 Proxy list (add more later)
+PROXIES = [
+    None,  # fallback (no proxy)
+    # "http://user:pass@ip:port",
+    # "http://ip:port",
+]
 
-# ⚙️ UNIVERSAL yt-dlp OPTIONS
+def get_random_proxy():
+    return random.choice(PROXIES)
+
+# ⚙️ yt-dlp options (optimized)
 def get_opts(filename, fmt):
+    proxy = get_random_proxy()
+
     return {
         "format": fmt,
         "outtmpl": filename,
         "quiet": True,
         "noplaylist": True,
-        "retries": 10,
-        "fragment_retries": 10,
-        "concurrent_fragment_downloads": 5,
+
+        # 🔥 FAST + SAFE
+        "retries": 2,
+        "fragment_retries": 2,
+        "socket_timeout": 10,
+
         "nocheckcertificate": True,
+
         "http_headers": {
-            "User-Agent": "Mozilla/5.0"
-        }
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        },
+
+        "proxy": proxy
     }
 
-# ⬇️ Download with fallback
+# 🔥 Smart download with retry logic
 def download_video(url, user_id, choice):
     filename = f"downloads/{user_id}_{int(time.time())}.%(ext)s"
-
-    formats = []
 
     if choice == "hd":
         formats = ["bestvideo+bestaudio", "best"]
@@ -72,17 +79,28 @@ def download_video(url, user_id, choice):
     else:
         formats = ["bestaudio", "best"]
 
-    for fmt in formats:
-        try:
-            ydl_opts = get_opts(filename, fmt)
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                file_path = ydl.prepare_filename(info)
-                return file_path, info
-        except:
-            continue
+    last_error = None
 
-    raise Exception("All formats failed")
+    for attempt in range(3):  # 🔁 smart retry
+        for fmt in formats:
+            try:
+                ydl_opts = get_opts(filename, fmt)
+
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    file_path = ydl.prepare_filename(info)
+
+                    if os.path.exists(file_path):
+                        return file_path, info
+
+            except Exception as e:
+                print(f"Attempt {attempt+1} failed:", str(e))
+                last_error = e
+                continue
+
+        time.sleep(2)  # small delay before retry
+
+    raise Exception(f"Download failed: {str(last_error)}")
 
 # 🚀 START
 @dp.message_handler(commands=["start"])
@@ -111,6 +129,7 @@ async def handle_link(message: types.Message):
             "nocheckcertificate": True,
             "http_headers": {"User-Agent": "Mozilla/5.0"}
         })
+
         info = ydl.extract_info(url, download=False)
 
         title = info.get("title", "Video")
@@ -133,7 +152,7 @@ async def handle_link(message: types.Message):
         )
 
     except Exception as e:
-        print(e)
+        print("INFO ERROR:", str(e))
         await msg.edit_text("❌ Couldn't fetch video info")
 
 # 🎛 Buttons
@@ -149,7 +168,7 @@ async def handle_buttons(call: types.CallbackQuery):
     asyncio.create_task(process(call.message, data["url"], user_id, choice))
     await call.answer()
 
-# ⚙️ Process
+# ⚙️ Process queue
 async def process(message, url, user_id, choice):
     async with semaphore:
         msg = await message.reply("⏳ Queued...")
@@ -159,11 +178,17 @@ async def process(message, url, user_id, choice):
             await msg.edit_text("⬇️ Downloading...")
 
             loop = asyncio.get_event_loop()
-            file_path, info = await loop.run_in_executor(
-                None, lambda: download_video(url, user_id, choice)
+
+            # 🔥 HARD TIMEOUT
+            file_path, info = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None, lambda: download_video(url, user_id, choice)
+                ),
+                timeout=30
             )
 
             size = os.path.getsize(file_path) / (1024 * 1024)
+
             if size > 49:
                 os.remove(file_path)
                 return await msg.edit_text("❌ File too large")
@@ -178,25 +203,14 @@ async def process(message, url, user_id, choice):
             os.remove(file_path)
 
             await msg.edit_text("✅ Done!\n📥 Save to gallery")
-
             await message.reply("🚀 Share this bot: @BrayC_bot")
 
+        except asyncio.TimeoutError:
+            await msg.edit_text("❌ Took too long. Try again.")
+
         except Exception as e:
-            print(e)
-            await msg.edit_text("❌ Failed, trying fallback...")
-
-            try:
-                loop = asyncio.get_event_loop()
-                file_path, info = await loop.run_in_executor(
-                    None, lambda: download_video(url, user_id, "sd")
-                )
-
-                await message.reply_video(video=InputFile(file_path))
-                os.remove(file_path)
-
-                await msg.edit_text("✅ Delivered in SD (fallback)")
-            except:
-                await msg.edit_text("❌ Completely failed")
+            print("PROCESS ERROR:", str(e))
+            await msg.edit_text("❌ Failed, try another link")
 
 # 🌐 Start web server
 threading.Thread(target=run_web).start()
