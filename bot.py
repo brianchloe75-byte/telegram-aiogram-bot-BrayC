@@ -1,72 +1,68 @@
 import os
 import time
+import asyncio
 import yt_dlp
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
-from aiogram.types import InputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 
-# 🔑 TOKEN (from Render env)
 TOKEN = os.getenv("TOKEN")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(bot)
 
-# 📁 Create downloads folder
 if not os.path.exists("downloads"):
     os.makedirs("downloads")
 
+# Queue control
+semaphore = asyncio.Semaphore(2)
 
-# 🌐 Fake web server (for Render free plan)
+# Store user choices
+user_data = {}
+
+# 🌐 Render web fix
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"Bot is alive!")
 
-
 def run_web():
     port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), Handler)
-    server.serve_forever()
+    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
-
-# ▶️ Start command
-@dp.message_handler(commands=['start'])
-async def start_cmd(message: types.Message):
-    await message.reply(
-        "🔥 Premium Video Downloader Bot\n\n"
-        "📥 Send any link:\n"
-        "• YouTube\n• TikTok\n• Instagram\n• Facebook\n\n"
-        "⚡ Fast downloads | HD quality",
-        parse_mode="Markdown"
-    )
-
-
-# 📥 Detect platform
+# 🎬 Detect platform
 def detect_platform(url):
-    if "youtube.com" in url or "youtu.be" in url:
-        return "YouTube"
-    elif "tiktok.com" in url:
-        return "TikTok"
-    elif "instagram.com" in url:
-        return "Instagram"
-    elif "facebook.com" in url:
-        return "Facebook"
-    return "Video"
+    if "youtube" in url:
+        return "🎥 YouTube"
+    elif "tiktok" in url:
+        return "🎵 TikTok"
+    elif "instagram" in url:
+        return "📸 Instagram"
+    elif "facebook" in url:
+        return "📘 Facebook"
+    return "🌐 Video"
 
-
-# ⬇️ Download function
-def download_video(url, user_id):
+# ⬇️ Download
+def download_video(url, user_id, choice):
     filename = f"downloads/{user_id}_{int(time.time())}.%(ext)s"
 
+    if choice == "hd":
+        fmt = "best[ext=mp4]/best"
+    elif choice == "sd":
+        fmt = "worst[ext=mp4]/worst"
+    else:
+        fmt = "bestaudio/best"
+
     ydl_opts = {
-        "format": "best",
+        "format": fmt,
         "outtmpl": filename,
         "quiet": True,
         "noplaylist": True,
+        "retries": 5,
     }
 
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -74,61 +70,113 @@ def download_video(url, user_id):
         file_path = ydl.prepare_filename(info)
         return file_path, info
 
+# 🚀 START
+@dp.message_handler(commands=["start"])
+async def start(message: types.Message):
+    await message.reply(
+        "🔥 ULTRA Downloader Bot\n\n"
+        "📥 Send any video link\n"
+        "🎯 Choose quality\n"
+        "⚡ Fast downloads\n\n"
+        "🚀 Invite friends & grow together",
+        parse_mode="Markdown"
+    )
 
-# 📩 Handle messages
+# 📩 Handle link
 @dp.message_handler()
-async def handle_message(message: types.Message):
+async def handle_link(message: types.Message):
     url = message.text
     user_id = message.from_user.id
 
     if not url.startswith("http"):
-        await message.reply("❌ Send a valid video link.")
-        return
+        return await message.reply("❌ Send a valid link")
 
     platform = detect_platform(url)
-    msg = await message.reply(f"⏳ Downloading from {platform}...")
+
+    msg = await message.reply("🔍 Fetching info...")
 
     try:
-        file_path, info = download_video(url, user_id)
+        ydl = yt_dlp.YoutubeDL({"quiet": True})
+        info = ydl.extract_info(url, download=False)
 
         title = info.get("title", "Video")
-        duration = info.get("duration", 0)
-        views = info.get("view_count", "N/A")
+        thumb = info.get("thumbnail")
 
-        caption = f"🎬 {title}\n⏱ Duration: {duration}s\n👀 Views: {views}"
+        user_data[user_id] = {"url": url}
 
-        # 📸 Thumbnail
-        thumb_url = info.get("thumbnail")
-        thumb_path = None
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("🎥 HD", callback_data="hd"))
+        keyboard.add(InlineKeyboardButton("📱 SD", callback_data="sd"))
+        keyboard.add(InlineKeyboardButton("🎧 Audio", callback_data="audio"))
 
-        if thumb_url:
-            import requests
-            thumb_path = f"downloads/{user_id}_thumb.jpg"
-            with open(thumb_path, "wb") as f:
-                f.write(requests.get(thumb_url).content)
+        await msg.delete()
 
-        # 🎥 Send video
-        await message.reply_video(
-            video=InputFile(file_path),
-            caption=caption,
+        await message.reply_photo(
+            photo=thumb,
+            caption=f"{platform}\n\n🎬 {title}\n\nChoose quality:",
             parse_mode="Markdown",
-            thumb=InputFile(thumb_path) if thumb_path else None
+            reply_markup=keyboard
         )
 
-        await msg.edit_text("✅ Download complete!")
+    except:
+        await msg.edit_text("❌ Failed to fetch video")
 
-        # 🧹 Cleanup
-        os.remove(file_path)
-        if thumb_path and os.path.exists(thumb_path):
-            os.remove(thumb_path)
+# 🎛 Button handler
+@dp.callback_query_handler(lambda c: True)
+async def handle_buttons(call: types.CallbackQuery):
+    user_id = call.from_user.id
+    choice = call.data
 
-    except Exception as e:
-        await msg.edit_text("❌ Failed to download. Try another link.")
+    data = user_data.get(user_id)
+    if not data:
+        return await call.message.reply("❌ Send link again")
 
+    asyncio.create_task(process(call.message, data["url"], user_id, choice))
+    await call.answer()
 
-# 🌐 Start web server (Render fix)
+# ⚙️ Process queue
+async def process(message, url, user_id, choice):
+    async with semaphore:
+        msg = await message.reply("⏳ Queued...")
+
+        try:
+            await msg.edit_text("⬇️ Downloading...")
+
+            loop = asyncio.get_event_loop()
+            file_path, info = await loop.run_in_executor(
+                None, lambda: download_video(url, user_id, choice)
+            )
+
+            size = os.path.getsize(file_path) / (1024 * 1024)
+            if size > 49:
+                os.remove(file_path)
+                return await msg.edit_text("❌ File too large")
+
+            await msg.edit_text("📤 Uploading...")
+
+            if choice == "audio":
+                await message.reply_audio(audio=InputFile(file_path))
+            else:
+                await message.reply_video(video=InputFile(file_path))
+
+            os.remove(file_path)
+
+            await msg.edit_text("✅ Done!\n📥 Saved to gallery")
+
+            # 📈 Growth message
+            await message.reply(
+                "🚀 Enjoying the bot?\n"
+                "Invite friends and grow together!\n"
+                "@BrayC_bot",
+                parse_mode="Markdown"
+            )
+
+        except:
+            await msg.edit_text("❌ Failed, try again")
+
+# 🌐 Start web server
 threading.Thread(target=run_web).start()
 
 # 🚀 Start bot
-print("🔥 Bot is running...")
+print("🔥 PREMIUM BOT RUNNING")
 executor.start_polling(dp)
