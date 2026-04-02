@@ -5,6 +5,7 @@ import random
 import yt_dlp
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from concurrent.futures import ThreadPoolExecutor
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
@@ -18,8 +19,9 @@ dp = Dispatcher(bot)
 if not os.path.exists("downloads"):
     os.makedirs("downloads")
 
-# 🔥 Queue system (limit active downloads)
+# 🔥 Controlled workers (prevents overload)
 semaphore = asyncio.Semaphore(2)
+executor_pool = ThreadPoolExecutor(max_workers=2)
 
 user_data = {}
 
@@ -34,17 +36,16 @@ def run_web():
     port = int(os.environ.get("PORT", 10000))
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
-# 🔥 Proxy list (add more later)
+# 🔥 Proxy system (optional)
 PROXIES = [
-    None,  # fallback (no proxy)
+    None,
     # "http://user:pass@ip:port",
-    # "http://ip:port",
 ]
 
 def get_random_proxy():
     return random.choice(PROXIES)
 
-# ⚙️ yt-dlp options (optimized)
+# ⚙️ yt-dlp options
 def get_opts(filename, fmt):
     proxy = get_random_proxy()
 
@@ -54,21 +55,20 @@ def get_opts(filename, fmt):
         "quiet": True,
         "noplaylist": True,
 
-        # 🔥 FAST + SAFE
-        "retries": 2,
-        "fragment_retries": 2,
+        "retries": 1,
+        "fragment_retries": 1,
         "socket_timeout": 10,
 
         "nocheckcertificate": True,
 
         "http_headers": {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+            "User-Agent": "Mozilla/5.0"
         },
 
         "proxy": proxy
     }
 
-# 🔥 Smart download with retry logic
+# 🔥 SAFE DOWNLOAD (ANTI-HANG)
 def download_video(url, user_id, choice):
     filename = f"downloads/{user_id}_{int(time.time())}.%(ext)s"
 
@@ -81,7 +81,7 @@ def download_video(url, user_id, choice):
 
     last_error = None
 
-    for attempt in range(3):  # 🔁 smart retry
+    for attempt in range(2):
         for fmt in formats:
             try:
                 ydl_opts = get_opts(filename, fmt)
@@ -98,7 +98,7 @@ def download_video(url, user_id, choice):
                 last_error = e
                 continue
 
-        time.sleep(2)  # small delay before retry
+        time.sleep(2)
 
     raise Exception(f"Download failed: {str(last_error)}")
 
@@ -106,13 +106,15 @@ def download_video(url, user_id, choice):
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
     await message.reply(
-        "🔥 ULTRA Downloader\n\n"
-        "⚡ Fast | Reliable | Multi-platform\n"
-        "🎯 Send link → choose quality",
+        "🔥 ULTRA Downloader v2\n\n"
+        "⚡ Fast & Reliable\n"
+        "🎬 HD | 📱 SD | 🎧 Audio\n"
+        "🚀 TikTok • Instagram • Facebook • YouTube\n\n"
+        "📩 Send a video link to begin",
         parse_mode="Markdown"
     )
 
-# 📩 Handle link
+# 📩 HANDLE LINK
 @dp.message_handler()
 async def handle_link(message: types.Message):
     url = message.text
@@ -155,7 +157,7 @@ async def handle_link(message: types.Message):
         print("INFO ERROR:", str(e))
         await msg.edit_text("❌ Couldn't fetch video info")
 
-# 🎛 Buttons
+# 🎛 BUTTON HANDLER
 @dp.callback_query_handler(lambda c: True)
 async def handle_buttons(call: types.CallbackQuery):
     user_id = call.from_user.id
@@ -168,30 +170,41 @@ async def handle_buttons(call: types.CallbackQuery):
     asyncio.create_task(process(call.message, data["url"], user_id, choice))
     await call.answer()
 
-# ⚙️ Process queue
+# ⚙️ PROCESS (FIXED CORE)
 async def process(message, url, user_id, choice):
     async with semaphore:
-        msg = await message.reply("⏳ Queued...")
+        msg = await message.reply(
+            "⏳ In Queue...\n⚡ Preparing download",
+            parse_mode="Markdown"
+        )
 
         try:
-            await msg.edit_text("⚡ Processing...")
-            await msg.edit_text("⬇️ Downloading...")
+            await msg.edit_text("⚡ Processing...", parse_mode="Markdown")
+            await msg.edit_text("⬇️ Downloading...", parse_mode="Markdown")
 
             loop = asyncio.get_event_loop()
 
-            # 🔥 HARD TIMEOUT
-            file_path, info = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None, lambda: download_video(url, user_id, choice)
-                ),
-                timeout=30
-            )
+            try:
+                file_path, info = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        executor_pool,
+                        lambda: download_video(url, user_id, choice)
+                    ),
+                    timeout=60
+                )
+            except asyncio.TimeoutError:
+                return await msg.edit_text(
+                    "⚠️ Took too long (server busy or blocked)\nTry again later"
+                )
+
+            if not os.path.exists(file_path):
+                return await msg.edit_text("❌ File missing after download")
 
             size = os.path.getsize(file_path) / (1024 * 1024)
 
             if size > 49:
                 os.remove(file_path)
-                return await msg.edit_text("❌ File too large")
+                return await msg.edit_text("❌ File too large (>50MB)")
 
             await msg.edit_text("📤 Uploading...")
 
@@ -202,19 +215,16 @@ async def process(message, url, user_id, choice):
 
             os.remove(file_path)
 
-            await msg.edit_text("✅ Done!\n📥 Save to gallery")
-            await message.reply("🚀 Share this bot: @BrayC_bot")
-
-        except asyncio.TimeoutError:
-            await msg.edit_text("❌ Took too long. Try again.")
+            await msg.edit_text("✅ Done! Save to gallery 📥")
+            await message.reply(f"🚀 Share this bot:@{BOT_USERNAME}")
 
         except Exception as e:
             print("PROCESS ERROR:", str(e))
-            await msg.edit_text("❌ Failed, try another link")
+            await msg.edit_text("❌ Failed. Try another link")
 
-# 🌐 Start web server
+# 🌐 START WEB
 threading.Thread(target=run_web).start()
 
-# 🚀 Start bot
+# 🚀 START BOT
 print("🔥 BULLETPROOF BOT RUNNING")
 executor.start_polling(dp)
