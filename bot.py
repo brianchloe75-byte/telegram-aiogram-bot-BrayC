@@ -49,7 +49,7 @@ async def start_web():
 # ------------------------------
 def detect_platform(url: str) -> str:
     url = url.lower()
-    if "youtube" in url:
+    if "youtube.com" in url or "youtu.be" in url:
         return "YouTube"
     elif "tiktok" in url:
         return "TikTok"
@@ -120,7 +120,7 @@ async def handle_all(message: types.Message):
     platform = detect_platform(url)
 
     if platform == "YouTube":
-        return await message.reply(f"Use @{EarthsBestDownloader_bot}")
+        return await message.reply(f"🛸 YouTube is handled separately.\nUse @{EarthsBestDownloader_bot}")
 
     if platform == "Unknown":
         return await message.reply("❌ Unsupported link")
