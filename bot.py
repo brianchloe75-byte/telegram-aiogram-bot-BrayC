@@ -215,3 +215,7 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+# keep main thread alive so render knows the process is running 
+import time 
+while true:
+    time.sleep(60)
