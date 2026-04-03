@@ -12,8 +12,8 @@ import yt_dlp
 # ------------------------------
 # ✅ Bot usernames
 # ------------------------------
-MAIN_BOT_USERNAME = "BrayC_bot"   # your main bot username
-YOUTUBE_BOT_USERNAME = "EarthsBestDownloader_bot"   # your YouTube-only bot username
+MAIN_BOT_USERNAME = "BrayC_bot"   # BrayC_bot
+YOUTUBE_BOT_USERNAME = "YT_BOT_USERNAME"   # your EarthsBestDownloader_bot
 
 # ------------------------------
 # Bot setup
