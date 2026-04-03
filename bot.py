@@ -6,7 +6,6 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
-from aiogram.utils import executor
 import yt_dlp
 
 # ------------------------------
@@ -209,5 +208,10 @@ async def process_download(message, url, user_id, choice):
 # ------------------------------
 # Start bot
 # ------------------------------
-print(f"🚀 {MAIN_BOT_USERNAME} running...")
-executor.start_polling(dp)
+async def main():
+    print(f"🚀 {MAIN_BOT_USERNAME} running...")
+    #start_polling
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
