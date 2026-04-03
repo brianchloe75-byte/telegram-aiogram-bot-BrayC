@@ -40,7 +40,7 @@ async def start_web():
     app.router.add_get("/", handle)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT", 8080))
     server = HTTPserver(("0.0.0.0", PORT),MyHandler)
     server.server_forever()
 
@@ -204,5 +204,5 @@ async def main():
 # ------------------------------
 # START
 # ------------------------------
-if _name_ == "_main_":
+if __name__ == "__main__":
     asyncio.run(main())
