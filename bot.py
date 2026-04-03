@@ -41,8 +41,8 @@ async def start_web():
     runner = web.AppRunner(app)
     await runner.setup()
     port = int(os.environ.get("PORT", 10000))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
+    server = HTTPserver(("0.0.0.0", PORT),MyHandler)
+    server.server_forever()
 
 # ------------------------------
 # PLATFORM DETECTION
