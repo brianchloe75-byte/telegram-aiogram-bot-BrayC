@@ -183,6 +183,7 @@ async def process_download(message, url, user_id, choice):
             await msg.edit_text("⬇️ Downloading...")
             loop = asyncio.get_event_loop()
 
+            # Run download in executor
             file_path, info = await loop.run_in_executor(
                 None, lambda: download_video(url, user_id, choice)
             )
@@ -202,9 +203,31 @@ async def process_download(message, url, user_id, choice):
             await msg.edit_text(f"✅ Done! 🎉 Share: @{BrayC_bot}")
 
         except Exception as e:
-            print("Download error:", e)
-            await msg.edit_text("❌ Something went wrong, try another link.")
+            # Try a last-resort retry automatically
+            try:
+                await msg.edit_text("⚠️ Retry in progress...")
+                file_path, info = await loop.run_in_executor(
+                    None, lambda: download_video(url, user_id, choice)
+                )
 
+                # Upload after retry
+                size_mb = os.path.getsize(file_path) / (1024 * 1024)
+                if size_mb > 50:
+                    os.remove(file_path)
+                    return await msg.edit_text("❌ File too large to send.")
+
+                await msg.edit_text("📤 Uploading to Telegram...")
+                if choice == "audio":
+                    await message.reply_audio(audio=InputFile(file_path))
+                else:
+                    await message.reply_video(video=InputFile(file_path))
+
+                os.remove(file_path)
+                await msg.edit_text(f"✅ Done! 🎉 Share: @{MAIN_BOT_USERNAME}")
+
+            except Exception as final_err:
+                print("Download error:", final_err)
+                await msg.edit_text("❌ Something went wrong, try another link.")
 # ------------------------------
 # Start bot
 # ------------------------------
