@@ -103,8 +103,11 @@ def download_video(url, user_id, choice):
 # ------------------------------
 @dp.message()
 async def handle_all(message: types.Message):
-    text = message.text.strip()
-    user_id = message.from_user.id
+    if not message.text:
+        return  # ignore non-text messages
+safely
+
+    text = message.text.strip
 
     if text == "/start":
         return await message.answer(
@@ -116,7 +119,10 @@ async def handle_all(message: types.Message):
         return await message.reply("⏳ Wait a few seconds.")
     cooldown[user_id] = time.time()
 
-    platform = detect_platform(text)
+    if "http" not in text:
+        return await message.reply("👵 send a valid link")
+
+platform = detect_platform(text)
 
     if platform == "YouTube":
         return await message.reply(f"Use @{EarthsBestDownloader_bot}")
