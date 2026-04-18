@@ -106,7 +106,6 @@ async def handle_all(message: types.Message):
     if not message.text:
         return  # ignore non-text messages
 safely
-
     text = message.text.strip
 
     if text == "/start":
