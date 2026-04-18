@@ -107,7 +107,6 @@ async def handle_all(message: types.Message):
     
     if not text:
         return  # ignore non-text messages
-safely
 
     text = text.strip()
     user_id = messages.from_user.id
